@@ -6,21 +6,18 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-require('dotenv').config(); // To use environment variables
+require('dotenv').config();
 
 // --- Middleware to verify JWT ---
 const authMiddleware = (req, res, next) => {
-    // Get token from header
     const authHeader = req.header('Authorization');
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
         return res.status(401).json({ msg: 'No token, authorization denied' });
     }
-    
     try {
         const token = authHeader.split(' ')[1];
         const JWT_SECRET = process.env.JWT_SECRET || 'a_default_secret_key';
         const decoded = jwt.verify(token, JWT_SECRET);
-        
         req.user = decoded.user;
         next();
     } catch (err) {
@@ -28,126 +25,127 @@ const authMiddleware = (req, res, next) => {
     }
 };
 
-
-// 2. Initialize Express App
 const app = express();
-// --- Configure CORS to allow your live website to make requests ---
-const corsOptions = {
-    origin: 'https://runwithme.club/' // IMPORTANT: Replace with your actual website URL
-};
-app.use(cors(corsOptions));// Allow requests from your frontend
-app.use(express.json()); // Allow server to accept JSON data
 
-// 3. Connect to MongoDB
+// --- FIX: Final, More Robust CORS Configuration ---
+const allowedOrigins = ['https://runwithme.club', 'https://www.runwithme.club'];
+
+const corsOptions = {
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or Postman) and from whitelisted domains
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  optionsSuccessStatus: 200 // For legacy browser support
+};
+// Use the CORS options
+app.use(cors(corsOptions));
+// Also handle pre-flight requests for all routes
+app.options('*', cors(corsOptions));
+// ----------------------------------------------------
+
+app.use(express.json());
+
+// --- MongoDB Connection ---
 const MONGO_URI = "mongodb+srv://Vivek2345:connect7890@memberportalcluster.v4qvgpf.mongodb.net/";
 
 mongoose.connect(MONGO_URI)
     .then(() => console.log("MongoDB connected successfully"))
     .catch(err => console.error("MongoDB connection error:", err));
 
-// 4. Define the User Schema and Model
+// --- Final User Schema with status and transaction ID ---
 const userSchema = new mongoose.Schema({
     name: { type: String, required: true },
     email: { type: String, required: true, unique: true },
     password: { type: String, required: true },
     mobile: String,
-    gender: String,
     dob: Date,
-    address: String,
+    status: { type: String, enum: ['pending', 'active'], default: 'pending' },
+    transactionId: { type: String }
 });
 const User = mongoose.model('User', userSchema);
 
-// --- 5. API Endpoints ---
+// --- API Endpoints ---
 
-// Registration Endpoint
+// 1. Registration Endpoint
 app.post('/api/register', async (req, res) => {
+    console.log("Received a request to /api/register from origin:", req.headers.origin); // Debugging line
     try {
-        const { name, email, password, mobile, gender, dob, address } = req.body;
-
-        // Check if user already exists
-        let user = await User.findOne({ email });
-        if (user) {
-            return res.status(400).json({ msg: 'User already exists' });
+        const { name, email, password, mobile, dob } = req.body;
+        if (!name || !email || !password || !mobile || !dob) {
+            return res.status(400).json({ msg: 'Please enter all fields' });
         }
-
-        // Hash the password
-        const salt = await bcrypt.genSalt(10);
-        const hashedPassword = await bcrypt.hash(password, salt);
-
-        // Create and save new user
-        user = new User({
-            name,
-            email,
-            password: hashedPassword,
-            mobile,
-            gender,
-            dob,
-            address
-        });
-        await user.save();
-
-        res.status(201).json({ msg: 'User registered successfully' });
-
+        if (await User.findOne({ email })) {
+            return res.status(400).json({ msg: 'User with this email already exists' });
+        }
+        const hashedPassword = await bcrypt.hash(password, 10);
+        const newUser = new User({ name, email, password: hashedPassword, mobile, dob });
+        await newUser.save();
+        res.status(201).json({ msg: 'User created. Please proceed to payment.' });
     } catch (err) {
-        console.error(err.message);
+        console.error("Registration Error:", err.message);
         res.status(500).send('Server Error');
     }
 });
 
-// Login Endpoint
+// 2. Activation Endpoint
+app.post('/api/activate', async (req, res) => {
+    try {
+        const { email, transactionId } = req.body;
+        if (!email || !transactionId) {
+            return res.status(400).json({ msg: 'Missing email or transaction ID' });
+        }
+        const user = await User.findOne({ email });
+        if (!user) {
+            return res.status(404).json({ msg: 'User not found' });
+        }
+        user.status = 'active';
+        user.transactionId = transactionId;
+        await user.save();
+        res.json({ msg: 'Account activated successfully!' });
+    } catch (err) {
+        console.error("Activation Error:", err.message);
+        res.status(500).send('Server Error');
+    }
+});
+
+// 3. Login Endpoint
 app.post('/api/login', async (req, res) => {
     try {
         const { email, password } = req.body;
-
-        // Check for user
         const user = await User.findOne({ email });
         if (!user) {
             return res.status(400).json({ msg: 'Invalid credentials' });
         }
-
-        // Compare password
-        const isMatch = await bcrypt.compare(password, user.password);
-        if (!isMatch) {
+        if (user.status !== 'active') {
+            return res.status(403).json({ msg: 'Account not active. Please complete payment.' });
+        }
+        if (!await bcrypt.compare(password, user.password)) {
             return res.status(400).json({ msg: 'Invalid credentials' });
         }
-
-        // Create and return a JWT (JSON Web Token)
         const payload = { user: { id: user.id } };
         const JWT_SECRET = process.env.JWT_SECRET || 'a_default_secret_key';
-
-        jwt.sign(payload, JWT_SECRET, { expiresIn: '1h' }, (err, token) => {
-            if (err) throw err;
-            res.json({ token });
-        });
-
+        const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '1h' });
+        res.json({ token });
     } catch (err) {
-        console.error(err.message);
+        console.error("Login Error:", err.message);
         res.status(500).send('Server Error');
     }
 });
 
-// Protected CRM Data Endpoint
+// 4. Protected CRM Data Endpoint
 app.get('/api/portal-data', authMiddleware, async (req, res) => {
     try {
-        // req.user.id comes from the authMiddleware after it decodes the token
-        const user = await User.findById(req.user.id).select('-password'); // Find user but exclude password
-        if (!user) {
-            return res.status(404).json({ msg: 'User not found' });
-        }
-        
-        // Send back user's name and any other portal data
-        res.json({
-            name: user.name,
-            // You can add more data here like activities, discounts etc.
-        });
-
+        const user = await User.findById(req.user.id).select('-password');
+        res.json({ name: user.name });
     } catch (err) {
-        console.error(err.message);
+        console.error("Portal Data Error:", err.message);
         res.status(500).send('Server Error');
     }
 });
 
-
-// 6. Start the Server
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server started on port ${PORT}`));
