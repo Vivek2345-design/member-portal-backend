@@ -31,7 +31,11 @@ const authMiddleware = (req, res, next) => {
 
 // 2. Initialize Express App
 const app = express();
-app.use(cors()); // Allow requests from your frontend
+// --- Configure CORS to allow your live website to make requests ---
+const corsOptions = {
+    origin: 'https://runwithme.club/' // IMPORTANT: Replace with your actual website URL
+};
+app.use(cors(corsOptions));// Allow requests from your frontend
 app.use(express.json()); // Allow server to accept JSON data
 
 // 3. Connect to MongoDB
