@@ -27,24 +27,9 @@ const authMiddleware = (req, res, next) => {
 
 const app = express();
 
-// --- FIX: Final, More Robust CORS Configuration ---
-const allowedOrigins = ['https://runwithme.club', 'https://www.runwithme.club'];
-
-const corsOptions = {
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or Postman) and from whitelisted domains
-    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  optionsSuccessStatus: 200 // For legacy browser support
-};
-// Use the CORS options
-app.use(cors(corsOptions));
-// Also handle pre-flight requests for all routes
-app.options('*', cors(corsOptions));
+// --- FIX: Using a more open CORS policy for debugging ---
+// This will temporarily allow requests from ANY origin to see if CORS is the root cause.
+app.use(cors());
 // ----------------------------------------------------
 
 app.use(express.json());
