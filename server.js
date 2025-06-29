@@ -202,15 +202,73 @@ app.get('/api/portal-data', authMiddleware, async (req, res) => {
     }
 });
 
-// All other admin endpoints for creating/editing posts, users, etc.
-app.patch('/api/admin/approve-user/:id', authMiddleware, adminMiddleware, async (req, res) => { /* ... */ });
-app.delete('/api/admin/deny-user/:id', authMiddleware, adminMiddleware, async (req, res) => { /* ... */ });
-app.post('/api/admin/posts', authMiddleware, adminMiddleware, async (req, res) => { /* ... */ });
-app.put('/api/admin/posts/:id', authMiddleware, adminMiddleware, async (req, res) => { /* ... */ });
-app.patch('/api/admin/posts/:id/status', authMiddleware, adminMiddleware, async (req, res) => { /* ... */ });
-app.delete('/api/admin/posts/:id', authMiddleware, adminMiddleware, async (req, res) => { /* ... */ });
-app.post('/api/request-discount', authMiddleware, async (req, res) => { /* ... */ });
-app.patch('/api/admin/requests/:id', authMiddleware, adminMiddleware, async (req, res) => { /* ... */ });
+// --- UPDATED: All other admin endpoints for creating/editing posts, users, etc. ---
+app.patch('/api/admin/approve-user/:id', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+        const user = await User.findByIdAndUpdate(req.params.id, { status: 'active' }, { new: true });
+        if (!user) return res.status(404).json({ msg: 'User not found' });
+        res.json({ msg: 'User approved successfully' });
+    } catch (err) { res.status(500).send('Server Error'); }
+});
+
+app.delete('/api/admin/deny-user/:id', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+        const user = await User.findByIdAndDelete(req.params.id);
+        if (!user) return res.status(404).json({ msg: 'User not found' });
+        res.json({ msg: 'User denied and deleted successfully' });
+    } catch (err) { res.status(500).send('Server Error'); }
+});
+
+app.post('/api/admin/posts', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+        const { title, description, link, postType } = req.body;
+        const newPost = new Post({ title, description, link, postType });
+        await newPost.save();
+        res.status(201).json(newPost);
+    } catch (err) { res.status(500).send('Server Error'); }
+});
+
+app.put('/api/admin/posts/:id', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+        const { title, description, link } = req.body;
+        const updatedPost = await Post.findByIdAndUpdate(req.params.id, { title, description, link }, { new: true });
+        res.json(updatedPost);
+    } catch (err) { res.status(500).send('Server Error'); }
+});
+
+app.patch('/api/admin/posts/:id/status', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+        const { status } = req.body;
+        const updatedPost = await Post.findByIdAndUpdate(req.params.id, { status }, { new: true });
+        res.json(updatedPost);
+    } catch (err) { res.status(500).send('Server Error'); }
+});
+
+app.delete('/api/admin/posts/:id', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+        const post = await Post.findByIdAndDelete(req.params.id);
+        if (!post) return res.status(404).json({ msg: 'Post not found' });
+        res.json({ msg: 'Post deleted' });
+    } catch (err) { res.status(500).send('Server Error'); }
+});
+
+app.post('/api/request-discount', authMiddleware, async (req, res) => {
+    try {
+        const { eventTitle } = req.body;
+        const newRequest = new DiscountRequest({ user: req.user.user.id, eventTitle });
+        await newRequest.save();
+        res.status(201).json({ msg: 'Discount request submitted successfully!' });
+    } catch (err) { res.status(500).send('Server Error'); }
+});
+
+app.patch('/api/admin/requests/:id', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+        const { status } = req.body;
+        const request = await DiscountRequest.findByIdAndUpdate(req.params.id, { status }, { new: true });
+        if(!request) return res.status(404).json({msg: 'Request not found'});
+        res.json(request);
+    } catch (err) { res.status(500).send('Server Error'); }
+});
 
 
 const PORT = process.env.PORT || 5000;
