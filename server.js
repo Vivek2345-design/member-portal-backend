@@ -36,7 +36,7 @@ const userSchema = new mongoose.Schema({
     joiningDate: { type: Date, default: Date.now }
 });
 const User = mongoose.model('User', userSchema);
-
+// Other schemas from previous steps can be added here if needed for the admin portal
 const postSchema = new mongoose.Schema({
     title: { type: String, required: true },
     description: { type: String },
@@ -61,7 +61,9 @@ const DiscountRequest = mongoose.model('DiscountRequest', discountRequestSchema)
 // --- Middleware ---
 const authMiddleware = (req, res, next) => {
     const authHeader = req.header('Authorization');
-    if (!authHeader || !authHeader.startsWith('Bearer ')) return res.status(401).json({ msg: 'No token, authorization denied' });
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ msg: 'No token, authorization denied' });
+    }
     try {
         const token = authHeader.split(' ')[1];
         req.user = jwt.verify(token, process.env.JWT_SECRET || 'a_default_secret_key');
@@ -74,7 +76,9 @@ const authMiddleware = (req, res, next) => {
 const adminMiddleware = async (req, res, next) => {
     try {
         const user = await User.findById(req.user.user.id);
-        if (user.role !== 'admin') return res.status(403).json({ msg: 'Access denied.' });
+        if (user.role !== 'admin') {
+            return res.status(403).json({ msg: 'Access denied. Admin role required.' });
+        }
         next();
     } catch (err) {
         res.status(500).send('Server Error');
@@ -82,18 +86,23 @@ const adminMiddleware = async (req, res, next) => {
 };
 
 // --- API Endpoints ---
+app.get('/', (req, res) => res.send('Backend server is live!'));
 
 // 1. Create Razorpay Order
 app.post('/api/create-order', async (req, res) => {
     try {
         const options = {
-            amount: 2999 * 100, // Amount in paise
+            // --- AMOUNT CHANGED FOR TESTING ---
+            amount: 1 * 100, // Amount in paise (₹1)
             currency: "INR",
             receipt: `receipt_order_${new Date().getTime()}`,
         };
         const order = await razorpay.orders.create(options);
         res.json(order);
-    } catch (err) { res.status(500).send('Server Error'); }
+    } catch (err) { 
+        console.error("Error creating Razorpay order:", err);
+        res.status(500).send('Server Error'); 
+    }
 });
 
 // 2. Verify Payment & Complete Registration
@@ -130,15 +139,16 @@ app.post('/api/login', async (req, res) => {
     try {
         const { email, password } = req.body;
         const user = await User.findOne({ email });
-        if (!user || !await bcrypt.compare(password, user.password)) {
-            return res.status(400).json({ msg: 'Invalid credentials.' });
+        if (!user || user.status !== 'active' || !await bcrypt.compare(password, user.password)) {
+            return res.status(400).json({ msg: 'Invalid credentials or account not active.' });
         }
         const payload = { user: { id: user.id, role: user.role } };
         const token = jwt.sign(payload, process.env.JWT_SECRET || 'a_default_secret_key', { expiresIn: '8h' });
         res.json({ token, role: user.role });
-    } catch (err) { res.status(500).send('Server Error'); }
+    } catch (err) {
+        res.status(500).send('Server Error');
+    }
 });
-
 
 // 4. User Portal Data
 app.get('/api/portal-data', authMiddleware, async (req, res) => {
@@ -167,43 +177,5 @@ app.get('/api/admin/dashboard', authMiddleware, adminMiddleware, async (req, res
     } catch (err) { res.status(500).send('Server Error'); }
 });
 
-// All other admin and user endpoints...
-app.post('/api/request-discount', authMiddleware, async (req, res) => {
-    try {
-        await new DiscountRequest({ user: req.user.user.id, eventTitle: req.body.eventTitle }).save();
-        res.status(201).json({ msg: 'Request submitted!' });
-    } catch (err) { res.status(500).send('Server Error'); }
-});
-
-app.post('/api/admin/posts', authMiddleware, adminMiddleware, async (req, res) => {
-    try {
-        const newPost = new Post(req.body);
-        await newPost.save();
-        res.status(201).json(newPost);
-    } catch (err) { res.status(500).send('Server Error'); }
-});
-
-app.patch('/api/admin/posts/:id/status', authMiddleware, adminMiddleware, async (req, res) => {
-    try {
-        await Post.findByIdAndUpdate(req.params.id, { status: req.body.status });
-        res.json({ msg: 'Post status updated' });
-    } catch (err) { res.status(500).send('Server Error'); }
-});
-
-app.delete('/api/admin/posts/:id', authMiddleware, adminMiddleware, async (req, res) => {
-    try {
-        await Post.findByIdAndDelete(req.params.id);
-        res.json({ msg: 'Post deleted' });
-    } catch (err) { res.status(500).send('Server Error'); }
-});
-
-app.patch('/api/admin/requests/:id', authMiddleware, adminMiddleware, async (req, res) => {
-    try {
-        await DiscountRequest.findByIdAndUpdate(req.params.id, req.body);
-        res.json({ msg: 'Request updated' });
-    } catch (err) { res.status(500).send('Server Error'); }
-});
-
-// Start the Server
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server started on port ${PORT}`));
