@@ -23,6 +23,14 @@ const razorpay = new Razorpay({
     key_secret: process.env.RAZORPAY_KEY_SECRET,
 });
 
+// --- NEW: Add validation for environment variables ---
+if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
+    console.error("!!! FATAL ERROR: Razorpay Key ID or Key Secret is not defined in environment variables.");
+    console.error("Please add RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET to your environment variables on Render.");
+    process.exit(1); // Stop the server from starting if keys are missing
+}
+
+
 // --- Schemas & Models ---
 const userSchema = new mongoose.Schema({
     name: { type: String, required: true },
