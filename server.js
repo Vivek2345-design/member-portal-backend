@@ -4,12 +4,14 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
-const jwt =require('jsonwebtoken');
+const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 require('dotenv').config();
 
 const app = express();
+
+// --- CORS Configuration ---
 app.use(cors());
 app.use(express.json());
 
@@ -17,9 +19,7 @@ app.use(express.json());
 const MONGO_URI = "mongodb+srv://Vivek2345:connect7890@memberportalcluster.v4qvgpf.mongodb.net/";
 mongoose.connect(MONGO_URI).then(() => console.log("MongoDB connected")).catch(err => console.error(err));
 
-// --- Schemas, Models, and Middleware ---
-
-// User Schema
+// --- Schemas ---
 const userSchema = new mongoose.Schema({
     name: { type: String, required: true },
     email: { type: String, required: true, unique: true },
@@ -34,7 +34,6 @@ const userSchema = new mongoose.Schema({
 });
 const User = mongoose.model('User', userSchema);
 
-// Post Schema
 const postSchema = new mongoose.Schema({
     title: { type: String, required: true },
     description: { type: String },
@@ -45,21 +44,21 @@ const postSchema = new mongoose.Schema({
 });
 const Post = mongoose.model('Post', postSchema);
 
-// Discount Request Schema
 const discountRequestSchema = new mongoose.Schema({
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     eventTitle: { type: String, required: true },
     status: { type: String, enum: ['pending', 'approved', 'denied'], default: 'pending' },
+    response: { type: String },
+    adminNotes: { type: String },
     requestedAt: { type: Date, default: Date.now }
 });
 const DiscountRequest = mongoose.model('DiscountRequest', discountRequestSchema);
 
-// Auth Middleware
+
+// --- Middleware ---
 const authMiddleware = (req, res, next) => {
     const authHeader = req.header('Authorization');
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        return res.status(401).json({ msg: 'No token, authorization denied' });
-    }
+    if (!authHeader || !authHeader.startsWith('Bearer ')) return res.status(401).json({ msg: 'No token, authorization denied' });
     try {
         const token = authHeader.split(' ')[1];
         req.user = jwt.verify(token, process.env.JWT_SECRET || 'a_default_secret_key');
@@ -69,42 +68,31 @@ const authMiddleware = (req, res, next) => {
     }
 };
 
-// Admin Middleware
 const adminMiddleware = async (req, res, next) => {
     try {
         const user = await User.findById(req.user.user.id);
-        if (user.role !== 'admin') {
-            return res.status(403).json({ msg: 'Access denied. Admin role required.' });
-        }
+        if (user.role !== 'admin') return res.status(403).json({ msg: 'Access denied. Admin role required.' });
         next();
     } catch (err) {
         res.status(500).send('Server Error');
     }
 };
 
-
 // --- API Endpoints ---
+app.get('/', (req, res) => res.send('Backend server is live and running!'));
 
-// Registration Endpoint
 app.post('/api/register', async (req, res) => {
     try {
         const { name, email, password, mobile, dob, transactionId } = req.body;
-        if (!name || !email || !password || !transactionId) {
-            return res.status(400).json({ msg: 'Please fill all required fields.' });
-        }
-        if (await User.findOne({ email })) {
-            return res.status(400).json({ msg: 'User with this email already exists.' });
-        }
+        if (!name || !email || !password || !transactionId) return res.status(400).json({ msg: 'Please fill all required fields.' });
+        if (await User.findOne({ email })) return res.status(400).json({ msg: 'User with this email already exists.' });
         const hashedPassword = await bcrypt.hash(password, 10);
         const newUser = new User({ name, email, password: hashedPassword, mobile, dob, transactionId });
         await newUser.save();
         res.status(201).json({ msg: 'Registration successful! Your account is pending admin approval.' });
-    } catch (err) {
-        res.status(500).send('Server Error');
-    }
+    } catch (err) { res.status(500).send('Server Error'); }
 });
 
-// Login Endpoint
 app.post('/api/login', async (req, res) => {
     try {
         const { email, password } = req.body;
@@ -115,61 +103,56 @@ app.post('/api/login', async (req, res) => {
         const payload = { user: { id: user.id, role: user.role } };
         const token = jwt.sign(payload, process.env.JWT_SECRET || 'a_default_secret_key', { expiresIn: '8h' });
         res.json({ token, role: user.role });
-    } catch (err) {
-        res.status(500).send('Server Error');
-    }
+    } catch (err) { res.status(500).send('Server Error'); }
 });
 
-// User Portal Data Endpoint
 app.get('/api/portal-data', authMiddleware, async (req, res) => {
     try {
         const user = await User.findById(req.user.user.id).select('-password');
         const posts = await Post.find({ status: 'published' }).sort({ createdAt: -1 });
+        const discountRequests = await DiscountRequest.find({ user: req.user.user.id }).sort({ requestedAt: -1 });
         const portalData = {
             activities: posts.filter(p => p.postType === 'activity'),
             events: posts.filter(p => p.postType === 'event'),
             merchandise: posts.filter(p => p.postType === 'merchandise'),
             socials: posts.filter(p => p.postType === 'social'),
         };
-        res.json({ user, portalData });
+        res.json({ user, portalData, discountRequests });
     } catch (err) { res.status(500).send('Server Error'); }
 });
 
+app.post('/api/request-discount', authMiddleware, async (req, res) => {
+    try {
+        const { eventTitle } = req.body;
+        await new DiscountRequest({ user: req.user.user.id, eventTitle }).save();
+        res.status(201).json({ msg: 'Discount request submitted!' });
+    } catch (err) { res.status(500).send('Server Error'); }
+});
 
-// --- Admin CRM Portal Endpoints ---
-
-// Get all data for admin dashboard
+// --- Admin Endpoints ---
 app.get('/api/admin/dashboard', authMiddleware, adminMiddleware, async (req, res) => {
     try {
         const users = await User.find().sort({ joiningDate: -1 });
         const posts = await Post.find().sort({ createdAt: -1 });
         const requests = await DiscountRequest.find().populate('user', 'name email').sort({ requestedAt: -1 });
         res.json({ users, posts, requests });
-    } catch (err) {
-        res.status(500).send('Server Error');
-    }
-});
-
-// Approve User
-app.patch('/api/admin/approve-user/:id', authMiddleware, adminMiddleware, async (req, res) => {
-    try {
-        const user = await User.findByIdAndUpdate(req.params.id, { status: 'active' }, { new: true });
-        if (!user) return res.status(404).json({ msg: 'User not found' });
-        res.json({ msg: 'User approved successfully' });
     } catch (err) { res.status(500).send('Server Error'); }
 });
 
-// Deny User
+app.patch('/api/admin/approve-user/:id', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+        await User.findByIdAndUpdate(req.params.id, { status: 'active' });
+        res.json({ msg: 'User approved' });
+    } catch (err) { res.status(500).send('Server Error'); }
+});
+
 app.delete('/api/admin/deny-user/:id', authMiddleware, adminMiddleware, async (req, res) => {
     try {
-        if (!await User.findByIdAndDelete(req.params.id)) {
-            return res.status(404).json({ msg: 'User not found' });
-        }
+        await User.findByIdAndDelete(req.params.id);
         res.json({ msg: 'User denied and deleted' });
     } catch (err) { res.status(500).send('Server Error'); }
 });
 
-// Create Post
 app.post('/api/admin/posts', authMiddleware, adminMiddleware, async (req, res) => {
     try {
         const { title, description, link, postType, status } = req.body;
@@ -179,44 +162,27 @@ app.post('/api/admin/posts', authMiddleware, adminMiddleware, async (req, res) =
     } catch (err) { res.status(500).send('Server Error'); }
 });
 
-// Update Post
-app.put('/api/admin/posts/:id', authMiddleware, adminMiddleware, async (req, res) => {
-    try {
-        const { title, description, link } = req.body;
-        const updatedPost = await Post.findByIdAndUpdate(req.params.id, { title, description, link }, { new: true });
-        res.json(updatedPost);
-    } catch (err) { res.status(500).send('Server Error'); }
-});
-
-// Update Post Status (Publish/Unpublish)
 app.patch('/api/admin/posts/:id/status', authMiddleware, adminMiddleware, async (req, res) => {
     try {
-        const { status } = req.body;
-        const updatedPost = await Post.findByIdAndUpdate(req.params.id, { status }, { new: true });
-        res.json(updatedPost);
+        await Post.findByIdAndUpdate(req.params.id, { status: req.body.status });
+        res.json({ msg: 'Post status updated' });
     } catch (err) { res.status(500).send('Server Error'); }
 });
 
-// Delete Post
 app.delete('/api/admin/posts/:id', authMiddleware, adminMiddleware, async (req, res) => {
     try {
-        if (!await Post.findByIdAndDelete(req.params.id)) {
-            return res.status(404).json({ msg: 'Post not found' });
-        }
+        await Post.findByIdAndDelete(req.params.id);
         res.json({ msg: 'Post deleted' });
     } catch (err) { res.status(500).send('Server Error'); }
 });
 
-// Update Discount Request Status
 app.patch('/api/admin/requests/:id', authMiddleware, adminMiddleware, async (req, res) => {
     try {
-        const { status } = req.body;
-        const request = await DiscountRequest.findByIdAndUpdate(req.params.id, { status }, { new: true });
-        if(!request) return res.status(404).json({msg: 'Request not found'});
-        res.json(request);
+        const { status, response, adminNotes } = req.body;
+        await DiscountRequest.findByIdAndUpdate(req.params.id, { status, response, adminNotes });
+        res.json({ msg: 'Request updated' });
     } catch (err) { res.status(500).send('Server Error'); }
 });
-
 
 // Start Server
 const PORT = process.env.PORT || 5000;
