@@ -5,7 +5,7 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const crypto = require('crypto'); // Built-in Node.js module for generating tokens
+const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 require('dotenv').config();
 
@@ -173,7 +173,6 @@ app.post('/api/reset-password', async (req, res) => {
     }
 });
 
-
 // Admin and other endpoints...
 app.get('/api/admin/dashboard', authMiddleware, adminMiddleware, async (req, res) => {
     try {
@@ -181,10 +180,38 @@ app.get('/api/admin/dashboard', authMiddleware, adminMiddleware, async (req, res
         const posts = await Post.find().sort({ createdAt: -1 });
         const requests = await DiscountRequest.find().populate('user', 'name email').sort({ requestedAt: -1 });
         res.json({ users, posts, requests });
-    } catch (err) { res.status(500).send('Server Error'); }
+    } catch (err) {
+        res.status(500).send('Server Error');
+    }
 });
 
-// ... all other admin endpoints for creating/editing posts, users, etc.
+// User CRM Portal Data Endpoint
+app.get('/api/portal-data', authMiddleware, async (req, res) => {
+    try {
+        const user = await User.findById(req.user.user.id).select('-password');
+        const posts = await Post.find({ status: 'published' }).sort({ createdAt: -1 });
+        const portalData = {
+            activities: posts.filter(p => p.postType === 'activity'),
+            events: posts.filter(p => p.postType === 'event'),
+            merchandise: posts.filter(p => p.postType === 'merchandise'),
+            socials: posts.filter(p => p.postType === 'social'),
+        };
+        res.json({ user, portalData });
+    } catch (err) {
+        res.status(500).send('Server Error');
+    }
+});
+
+// All other admin endpoints for creating/editing posts, users, etc.
+app.patch('/api/admin/approve-user/:id', authMiddleware, adminMiddleware, async (req, res) => { /* ... */ });
+app.delete('/api/admin/deny-user/:id', authMiddleware, adminMiddleware, async (req, res) => { /* ... */ });
+app.post('/api/admin/posts', authMiddleware, adminMiddleware, async (req, res) => { /* ... */ });
+app.put('/api/admin/posts/:id', authMiddleware, adminMiddleware, async (req, res) => { /* ... */ });
+app.patch('/api/admin/posts/:id/status', authMiddleware, adminMiddleware, async (req, res) => { /* ... */ });
+app.delete('/api/admin/posts/:id', authMiddleware, adminMiddleware, async (req, res) => { /* ... */ });
+app.post('/api/request-discount', authMiddleware, async (req, res) => { /* ... */ });
+app.patch('/api/admin/requests/:id', authMiddleware, adminMiddleware, async (req, res) => { /* ... */ });
+
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server started on port ${PORT}`));
