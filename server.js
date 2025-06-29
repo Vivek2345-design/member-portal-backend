@@ -4,7 +4,7 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
+const jwt =require('jsonwebtoken');
 const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 require('dotenv').config();
@@ -120,34 +120,105 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
+// User Portal Data Endpoint
+app.get('/api/portal-data', authMiddleware, async (req, res) => {
+    try {
+        const user = await User.findById(req.user.user.id).select('-password');
+        const posts = await Post.find({ status: 'published' }).sort({ createdAt: -1 });
+        const portalData = {
+            activities: posts.filter(p => p.postType === 'activity'),
+            events: posts.filter(p => p.postType === 'event'),
+            merchandise: posts.filter(p => p.postType === 'merchandise'),
+            socials: posts.filter(p => p.postType === 'social'),
+        };
+        res.json({ user, portalData });
+    } catch (err) { res.status(500).send('Server Error'); }
+});
+
 
 // --- Admin CRM Portal Endpoints ---
 
 // Get all data for admin dashboard
 app.get('/api/admin/dashboard', authMiddleware, adminMiddleware, async (req, res) => {
-    console.log("Admin dashboard request received.");
     try {
-        console.log("Fetching users...");
         const users = await User.find().sort({ joiningDate: -1 });
-        
-        console.log("Fetching posts...");
         const posts = await Post.find().sort({ createdAt: -1 });
-        
-        console.log("Fetching discount requests...");
         const requests = await DiscountRequest.find().populate('user', 'name email').sort({ requestedAt: -1 });
-        
-        console.log("All data fetched successfully. Sending response.");
         res.json({ users, posts, requests });
-
     } catch (err) {
-        console.error("Error in /api/admin/dashboard endpoint:", err.message);
-        res.status(500).send('Server Error while fetching dashboard data.');
+        res.status(500).send('Server Error');
     }
 });
 
-// All other endpoints remain the same...
-// ... (User Portal data, other admin endpoints, etc.)
+// Approve User
+app.patch('/api/admin/approve-user/:id', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+        const user = await User.findByIdAndUpdate(req.params.id, { status: 'active' }, { new: true });
+        if (!user) return res.status(404).json({ msg: 'User not found' });
+        res.json({ msg: 'User approved successfully' });
+    } catch (err) { res.status(500).send('Server Error'); }
+});
+
+// Deny User
+app.delete('/api/admin/deny-user/:id', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+        if (!await User.findByIdAndDelete(req.params.id)) {
+            return res.status(404).json({ msg: 'User not found' });
+        }
+        res.json({ msg: 'User denied and deleted' });
+    } catch (err) { res.status(500).send('Server Error'); }
+});
+
+// Create Post
+app.post('/api/admin/posts', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+        const { title, description, link, postType, status } = req.body;
+        const newPost = new Post({ title, description, link, postType, status: status || 'draft' });
+        await newPost.save();
+        res.status(201).json(newPost);
+    } catch (err) { res.status(500).send('Server Error'); }
+});
+
+// Update Post
+app.put('/api/admin/posts/:id', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+        const { title, description, link } = req.body;
+        const updatedPost = await Post.findByIdAndUpdate(req.params.id, { title, description, link }, { new: true });
+        res.json(updatedPost);
+    } catch (err) { res.status(500).send('Server Error'); }
+});
+
+// Update Post Status (Publish/Unpublish)
+app.patch('/api/admin/posts/:id/status', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+        const { status } = req.body;
+        const updatedPost = await Post.findByIdAndUpdate(req.params.id, { status }, { new: true });
+        res.json(updatedPost);
+    } catch (err) { res.status(500).send('Server Error'); }
+});
+
+// Delete Post
+app.delete('/api/admin/posts/:id', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+        if (!await Post.findByIdAndDelete(req.params.id)) {
+            return res.status(404).json({ msg: 'Post not found' });
+        }
+        res.json({ msg: 'Post deleted' });
+    } catch (err) { res.status(500).send('Server Error'); }
+});
+
+// Update Discount Request Status
+app.patch('/api/admin/requests/:id', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+        const { status } = req.body;
+        const request = await DiscountRequest.findByIdAndUpdate(req.params.id, { status }, { new: true });
+        if(!request) return res.status(404).json({msg: 'Request not found'});
+        res.json(request);
+    } catch (err) { res.status(500).send('Server Error'); }
+});
+
 
 // Start Server
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server started on port ${PORT}`));
+
