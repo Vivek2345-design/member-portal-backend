@@ -25,7 +25,7 @@ const transporter = nodemailer.createTransport({
     }
 });
 
-// --- UPDATED User Schema with password reset fields ---
+// --- Schemas ---
 const userSchema = new mongoose.Schema({
     name: { type: String, required: true },
     email: { type: String, required: true, unique: true },
@@ -40,23 +40,90 @@ const userSchema = new mongoose.Schema({
 });
 const User = mongoose.model('User', userSchema);
 
-// Other schemas...
-// ...
+const postSchema = new mongoose.Schema({
+    title: { type: String, required: true },
+    description: { type: String },
+    link: { type: String },
+    postType: { type: String, enum: ['activity', 'event', 'merchandise', 'social'], required: true },
+    status: { type: String, enum: ['draft', 'published'], default: 'draft' },
+    createdAt: { type: Date, default: Date.now }
+});
+const Post = mongoose.model('Post', postSchema);
+
+const discountRequestSchema = new mongoose.Schema({
+    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    eventTitle: { type: String, required: true },
+    status: { type: String, enum: ['pending', 'approved', 'denied'], default: 'pending' },
+    requestedAt: { type: Date, default: Date.now }
+});
+const DiscountRequest = mongoose.model('DiscountRequest', discountRequestSchema);
+
 
 // --- Middleware ---
-const authMiddleware = (req, res, next) => { /* ... */ };
-const adminMiddleware = async (req, res, next) => { /* ... */ };
+const authMiddleware = (req, res, next) => {
+    const authHeader = req.header('Authorization');
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ msg: 'No token, authorization denied' });
+    }
+    try {
+        const token = authHeader.split(' ')[1];
+        req.user = jwt.verify(token, process.env.JWT_SECRET || 'a_default_secret_key');
+        next();
+    } catch (err) {
+        res.status(401).json({ msg: 'Token is not valid' });
+    }
+};
+
+const adminMiddleware = async (req, res, next) => {
+    try {
+        const user = await User.findById(req.user.user.id);
+        if (user.role !== 'admin') {
+            return res.status(403).json({ msg: 'Access denied. Admin role required.' });
+        }
+        next();
+    } catch (err) {
+        res.status(500).send('Server Error');
+    }
+};
 
 // --- API Endpoints ---
-app.post('/api/register', async (req, res) => { /* ... */ });
-app.post('/api/login', async (req, res) => { /* ... */ });
+app.post('/api/register', async (req, res) => {
+    try {
+        const { name, email, password, mobile, dob, transactionId } = req.body;
+        if (!name || !email || !password || !transactionId) {
+            return res.status(400).json({ msg: 'Please fill all required fields.' });
+        }
+        if (await User.findOne({ email })) {
+            return res.status(400).json({ msg: 'User with this email already exists.' });
+        }
+        const hashedPassword = await bcrypt.hash(password, 10);
+        const newUser = new User({ name, email, password: hashedPassword, mobile, dob, transactionId });
+        await newUser.save();
+        res.status(201).json({ msg: 'Registration successful! Your account is pending admin approval.' });
+    } catch (err) {
+        res.status(500).send('Server Error');
+    }
+});
 
-// --- NEW: Forgot Password Endpoint ---
+app.post('/api/login', async (req, res) => {
+    try {
+        const { email, password } = req.body;
+        const user = await User.findOne({ email });
+        if (!user || user.status !== 'active' || !await bcrypt.compare(password, user.password)) {
+            return res.status(400).json({ msg: 'Invalid credentials or account not active.' });
+        }
+        const payload = { user: { id: user.id, role: user.role } };
+        const token = jwt.sign(payload, process.env.JWT_SECRET || 'a_default_secret_key', { expiresIn: '8h' });
+        res.json({ token, role: user.role });
+    } catch (err) {
+        res.status(500).send('Server Error');
+    }
+});
+
 app.post('/api/forgot-password', async (req, res) => {
     try {
         const user = await User.findOne({ email: req.body.email });
         if (!user) {
-            // For security, don't reveal that the user does not exist
             return res.status(200).json({ msg: 'If a user with that email exists, a reset link has been sent.' });
         }
         
@@ -83,7 +150,6 @@ app.post('/api/forgot-password', async (req, res) => {
     }
 });
 
-// --- NEW: Reset Password Endpoint ---
 app.post('/api/reset-password', async (req, res) => {
     try {
         const user = await User.findOne({
@@ -109,7 +175,16 @@ app.post('/api/reset-password', async (req, res) => {
 
 
 // Admin and other endpoints...
-// ...
+app.get('/api/admin/dashboard', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+        const users = await User.find().sort({ joiningDate: -1 });
+        const posts = await Post.find().sort({ createdAt: -1 });
+        const requests = await DiscountRequest.find().populate('user', 'name email').sort({ requestedAt: -1 });
+        res.json({ users, posts, requests });
+    } catch (err) { res.status(500).send('Server Error'); }
+});
+
+// ... all other admin endpoints for creating/editing posts, users, etc.
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server started on port ${PORT}`));
