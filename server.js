@@ -1,29 +1,25 @@
-// server.js - with debugging
+// server.js - FINAL CORRECTED VERSION
 const express = require('express');
 const axios = require('axios');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const cors = require('cors');
 require('dotenv').config();
 
-console.log('Server process started.'); // DEBUG: Check if the script runs
-
-// --- API Key Check ---
-const apiKey = process.env.GEMINI_API_KEY;
-if (!apiKey) {
-    console.error('FATAL ERROR: GEMINI_API_KEY environment variable not found.');
-    process.exit(1); // Stop the server if the key is missing
-}
-console.log('GEMINI_API_KEY loaded.'); // DEBUG: Confirm the key was found
-
 const app = express();
 const PORT = process.env.PORT || 3000;
-const genAI = new GoogleGenerativeAI(apiKey); // Use the checked key
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 app.use(cors());
 app.use(express.json());
 
+// --- FIX: Function to clean the AI's JSON response ---
+function sanitizeJsonResponse(rawText) {
+    // Remove the markdown code block wrapper
+    const cleanedText = rawText.replace(/^```json\s*|```$/g, '');
+    return cleanedText;
+}
+
 app.post('/analyze', async (req, res) => {
-    // ... (the rest of your /analyze route code remains the same)
     const { url } = req.body;
     if (!url) {
         return res.status(400).json({ error: 'URL is required' });
@@ -31,7 +27,10 @@ app.post('/analyze', async (req, res) => {
 
     try {
         console.log(`Fetching HTML from: ${url}`);
-        const response = await axios.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+        const response = await axios.get(url, { 
+            headers: { 'User-Agent': 'Mozilla/5.0' },
+            timeout: 10000 // Add a 10-second timeout
+        });
         const liveHtml = response.data;
 
         console.log('Analyzing HTML with Gemini...');
@@ -45,18 +44,22 @@ app.post('/analyze', async (req, res) => {
             model.generateContent(redesignPrompt)
         ]);
 
-        const healthData = JSON.parse(healthResult.response.text());
-        const redesignData = JSON.parse(redesignResult.response.text());
+        // --- FIX: Sanitize the responses before parsing ---
+        const healthData = JSON.parse(sanitizeJsonResponse(healthResult.response.text()));
+        const redesignData = JSON.parse(sanitizeJsonResponse(redesignResult.response.text()));
         
         console.log('Analysis complete.');
         res.json({ health: healthData, redesign: redesignData });
 
     } catch (error) {
         console.error('Error:', error.message);
-        res.status(500).json({ error: 'Failed to analyze the website. The URL may be inaccessible or the server failed.' });
+        if (error.code === 'ETIMEDOUT') {
+            return res.status(504).json({ error: 'Failed to fetch the website. The server timed out.' });
+        }
+        res.status(500).json({ error: 'Failed to analyze the website. The server encountered an error.' });
     }
 });
 
 app.listen(PORT, () => {
-    console.log(`Server is now successfully listening on port ${PORT}`); // DEBUG: Confirm server is live
+    console.log(`Server is now successfully listening on port ${PORT}`);
 });
